@@ -6,23 +6,7 @@ pipeline {
         jdk 'jdk17'
     }
 
-    environment {
-        // Safe branch name for Docker image/container (replace '/' with '-')
-        BRANCH_NAME_SAFE = env.BRANCH_NAME.replaceAll('/', '-')
-        DOCKER_IMAGE = "mohan/maven-web-app:${BRANCH_NAME_SAFE}"
-        CONTAINER_NAME = "maven-web-app-${BRANCH_NAME_SAFE}"
-    }
-
     stages {
-
-        stage('Check Branch') {
-            when {
-                expression { env.BRANCH_NAME.startsWith('Feature/') }
-            }
-            steps {
-                echo "✅ Branch ${env.BRANCH_NAME} is a feature branch. Proceeding..."
-            }
-        }
 
         stage('Checkout') {
             steps {
@@ -45,39 +29,35 @@ pipeline {
             }
         }
 
-        stage('Build Docker Image') {
+        stage('Build & Deploy Docker') {
             steps {
-                echo "🐳 Preparing Docker image ${DOCKER_IMAGE}..."
                 script {
+                    // Docker image/container name based on branch
+                    def branchSafe = env.BRANCH_NAME.replaceAll('/', '-')
+                    def dockerImage = "mohan/maven-web-app:${branchSafe}"
+                    def containerName = "maven-web-app-${branchSafe}"
+
                     // Delete old image if exists
                     def imageExists = sh(
-                        script: "docker images -q ${DOCKER_IMAGE}",
+                        script: "docker images -q ${dockerImage}",
                         returnStdout: true
                     ).trim()
                     if (imageExists) {
-                        echo "🗑️ Removing existing Docker image ${DOCKER_IMAGE}..."
-                        sh "docker rmi -f ${DOCKER_IMAGE}"
+                        echo "🗑️ Removing existing Docker image ${dockerImage}..."
+                        sh "docker rmi -f ${dockerImage}"
                     }
 
-                    echo "📦 Building new Docker image ${DOCKER_IMAGE}..."
-                    sh "docker build -t ${DOCKER_IMAGE} ."
-                }
-            }
-        }
+                    // Build Docker image
+                    sh "docker build -t ${dockerImage} ."
 
-        stage('Deploy Docker Container') {
-            steps {
-                echo "🚀 Deploying Docker container ${CONTAINER_NAME}..."
-                script {
                     // Remove old container if exists
                     sh """
-                        if [ \$(docker ps -aq -f name=${CONTAINER_NAME}) ]; then
-                            echo '🗑️ Removing existing container...'
-                            docker rm -f ${CONTAINER_NAME}
+                        if [ \$(docker ps -aq -f name=${containerName}) ]; then
+                            docker rm -f ${containerName}
                         fi
                     """
 
-                    // Find a free port between 8000-9000
+                    // Find free port
                     def freePort = sh(
                         script: """
                             for port in \$(seq 8000 9000); do
@@ -89,11 +69,10 @@ pipeline {
                         """,
                         returnStdout: true
                     ).trim()
-                    echo "Selected free port: ${freePort}"
 
                     // Run container
-                    sh "docker run -d --name ${CONTAINER_NAME} -p ${freePort}:8080 ${DOCKER_IMAGE}"
-                    echo "✅ Application is running at http://<host>:${freePort}"
+                    sh "docker run -d --name ${containerName} -p ${freePort}:8080 ${dockerImage}"
+                    echo "✅ Application running at http://<host>:${freePort}"
                 }
             }
         }
